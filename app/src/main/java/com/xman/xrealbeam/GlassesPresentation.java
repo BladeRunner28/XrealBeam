@@ -31,6 +31,7 @@ public class GlassesPresentation extends Presentation {
     private final HeadPose pose;
     private final XrealImu imu;
     private final MountCal mountCal;
+    private final Geometry geom;
     private GLSurfaceView gl;
     private TextView hud;
     private TextView prompt;
@@ -41,10 +42,12 @@ public class GlassesPresentation extends Presentation {
         public void run() {
             if (hud != null) {
                 hud.setText(String.format(Locale.US,
-                        "%s | %.0f fps | %s | %s\naccel %6.2f %6.2f %6.2f g   |a| %.2f   spread %.3f g",
+                        "%s | %.0f fps | %s | %s\n%s\n%s\naccel %6.2f %6.2f %6.2f g   |a| %.2f   spread %.3f g",
                         pose.isLeveled() ? "LEVELLED" : "not levelled",
                         pose.fps(), pose.describe(),
                         imu == null ? "no IMU" : imu.state,
+                        geom == null ? "" : geom.describe(),
+                        geom == null ? "" : geom.fovDescribe(),
                         imu == null ? 0 : imu.accelBodyX, imu == null ? 0 : imu.accelBodyY,
                         imu == null ? 0 : imu.accelBodyZ,
                         imu == null ? 0 : Math.sqrt(imu.accelBodyX * imu.accelBodyX
@@ -61,11 +64,12 @@ public class GlassesPresentation extends Presentation {
     };
 
     public GlassesPresentation(Context ctx, Display display, HeadPose pose, XrealImu imu,
-                               MountCal mountCal) {
+                               MountCal mountCal, Geometry geom) {
         super(ctx, display);
         this.pose = pose;
         this.imu = imu;
         this.mountCal = mountCal;
+        this.geom = geom;
     }
 
     @Override
@@ -76,7 +80,7 @@ public class GlassesPresentation extends Presentation {
 
         gl = new GLSurfaceView(getContext());
         gl.setEGLContextClientVersion(2);
-        gl.setRenderer(new ScreenRenderer(pose, imu));
+        gl.setRenderer(new ScreenRenderer(pose, imu, geom));
         gl.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         root.addView(gl, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));

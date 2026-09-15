@@ -52,6 +52,9 @@ public class MainActivity extends Activity {
     private XrealImu imu;
 
     private HeadPose pose;
+    // Screen geometry + optics model: sizes/distances are in metres and the projection comes from
+    // the glasses' field of view, so "150-inch at 15 feet" is literally reproducible.
+    private final Geometry geom = new Geometry();
     // Mount calibration: derives the device->viewer mount from gravity in two still poses.
     private final MountCal mountCal = new MountCal();
     private boolean calApplied;
@@ -174,17 +177,28 @@ public class MainActivity extends Activity {
         addButton(row, "mount X", v -> { pose.stepMount(0); log("mount: " + pose.describe()); });
         addButton(row, "mount Y", v -> { pose.stepMount(1); log("mount: " + pose.describe()); });
         addButton(row, "mount Z", v -> { pose.stepMount(2); log("mount: " + pose.describe()); });
-        addButton(row, "mode", v -> {
+        addButton(row, "lock/follow", v -> {
             pose.smoothFollow = !pose.smoothFollow;
             log("mode: " + pose.describe());
         });
+        addButton(row, "screen", v -> { geom.cycleMode(); log(geom.describe()); });
+        addButton(row, "size +", v -> { geom.scaleSize(1.1); log(geom.describe()); });
+        addButton(row, "size -", v -> { geom.scaleSize(1.0 / 1.1); log(geom.describe()); });
+        addButton(row, "nearer", v -> { geom.shiftDistance(-0.25); log(geom.describe()); });
+        addButton(row, "farther", v -> { geom.shiftDistance(0.25); log(geom.describe()); });
+        // Calibrating the optics assumption with the only instrument available: the wearer's eyes.
+        addButton(row, "FOV check", v -> {
+            geom.fovCheck = !geom.fovCheck;
+            log(geom.fovDescribe() + " - brackets must sit ON the panel corners");
+        });
+        addButton(row, "FOV", v -> { geom.cycleFov(); log(geom.fovDescribe()); });
         addButton(row, "glasses", v -> showOnGlasses());
 
         // Embedded surface on the phone screen: a second view of the same pose path, so the motion
         // can be sanity-checked without wearing anything.
         embeddedGl = new GLSurfaceView(this);
         embeddedGl.setEGLContextClientVersion(2);
-        embeddedGl.setRenderer(new ScreenRenderer(pose, imu));
+        embeddedGl.setRenderer(new ScreenRenderer(pose, imu, geom));
         embeddedGl.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         root.addView(embeddedGl, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 420));
@@ -261,7 +275,7 @@ public class MainActivity extends Activity {
                 try { presentation.dismiss(); } catch (Exception ignored) { }
                 presentation = null;
             }
-            presentation = new GlassesPresentation(this, target, pose, imu, mountCal);
+            presentation = new GlassesPresentation(this, target, pose, imu, mountCal, geom);
             presentation.show();
             log("presentation shown on display " + target.getDisplayId()
                     + " (" + target.getName() + ")");
@@ -425,6 +439,7 @@ public class MainActivity extends Activity {
                                 + "DRIFT %7.2f deg / %5.0f s  = %7.2f deg/min%n"
                                 + "ZUPT %-9s suppressed %7.2f deg%n"
                                 + "render %s  %.0f fps  %s%n"
+                                + "%s%n%s%n"
                                 + "gyro bias %6.2f %6.2f %6.2f deg/s",
                         imu.state, imu.frames, imu.hz,
                         imu.yaw, imu.pitch, imu.roll,
@@ -434,6 +449,7 @@ public class MainActivity extends Activity {
                         imu.stillness ? "ACTIVE" : "idle", imu.yawSuppressedDeg,
                         pose.isLeveled() ? "LEVELLED" : "not levelled",
                         pose.fps(), pose.describe(),
+                        geom.describe(), geom.fovDescribe(),
                         imu.gyroBiasX, imu.gyroBiasY, imu.gyroBiasZ));
                 detail.setText(imu.lastFrameInfo + "\n\n"
                         + "----- handshake -----\n" + imu.handshakeLog
@@ -466,6 +482,9 @@ public class MainActivity extends Activity {
                 + "\ndrift: " + imu.driftDeg + " deg over " + imu.driftSeconds + " s  = "
                 + imu.driftDegPerMin + " deg/min   (recentered=" + imu.recentered + ")"
                 + "\ngyro bias estimate: " + imu.gyroBiasX + " " + imu.gyroBiasY + " " + imu.gyroBiasZ + " deg/s"
+                + "\n=== SCREEN / OPTICS ==="
+                + "\n" + geom.describe()
+                + "\n" + geom.fovDescribe()
                 + "\n=== MOUNT (body -> viewer) ==="
                 + "\nselected: " + pose.describe()
                 + "\nmount quat (w,x,y,z): " + f4(pose.mountQuat())

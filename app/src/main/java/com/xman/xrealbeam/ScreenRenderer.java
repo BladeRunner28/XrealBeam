@@ -16,13 +16,19 @@ import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
- * Renders the virtual screen: one textured quad at 2 m, viewed through the head pose.
+ * Renders the virtual screen: one textured quad at the geometry's distance, viewed through the head
+ * pose. Content is procedural (grid + corner markers + crosshair) until MediaProjection feeds a
+ * SurfaceTexture in as the texture.
  *
- * The content is deliberately procedural (grid + corner markers + crosshair) rather than a mirrored
- * phone screen. Reason: the only thing that cannot be verified off-device is whether head motion
- * moves the screen the right way, and a high-contrast grid makes a wrong axis or inverted sign
- * unmistakable. Swapping in a MediaProjection / SurfaceTexture content source is a later step and
- * touches only the texture, not the pose path.
+ * Why procedural: the only thing that cannot be verified off-device is whether head motion moves the
+ * screen the right way, and a high-contrast grid makes a wrong axis or inverted sign unmistakable.
+ * Swapping in mirrored screen content touches only {@link #textureId}'s source.
+ *
+ * Two coordinate systems live here and mixing them is the classic bug:
+ *   - the world quad: model = translate(0,0,-distance) * scale(width,height), camera = head pose,
+ *     projection = the optics' field of view (from {@link Geometry});
+ *   - the FOV check overlay: drawn in normalized device coordinates with an identity MVP, so it
+ *     always sits exactly on the panel edge regardless of pose — which is the whole point of it.
  */
 public class ScreenRenderer implements GLSurfaceView.Renderer {
 
@@ -44,31 +50,41 @@ public class ScreenRenderer implements GLSurfaceView.Renderer {
             "  gl_FragColor = texture2D(uTex, vUv);\n" +
             "}\n";
 
-    // Quad: 1.8 m wide, 1.012 m tall (16:9), centred on the origin, facing +z.
+    /** Unit quad: scaled per frame from the geometry (so size/distance are live). */
     private static final float[] QUAD = {
-            -0.9f, -0.506f, 0f,
-             0.9f, -0.506f, 0f,
-            -0.9f,  0.506f, 0f,
-             0.9f,  0.506f, 0f,
+            -0.5f, -0.5f, 0f,
+             0.5f, -0.5f, 0f,
+            -0.5f,  0.5f, 0f,
+             0.5f,  0.5f, 0f,
     };
     private static final float[] UV = {0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f};
+    /** Full-frame quad in NDC, for the FOV check overlay (identity MVP). */
+    private static final float[] NDC_QUAD = {
+            -1f, -1f, 0f,
+             1f, -1f, 0f,
+            -1f,  1f, 0f,
+             1f,  1f, 0f,
+    };
 
     private final HeadPose pose;
     private final XrealImu imu;
+    private final Geometry geom;
 
     private int program, aPos, aUv, uMvp, uTex;
-    private int textureId;
+    private int textureId, overlayId;
     private final float[] proj = new float[16];
     private final float[] view = new float[16];
     private final float[] model = new float[16];
     private final float[] mvp = new float[16];
     private final float[] scratch = new float[16];
+    private final float[] identity = new float[16];
     private long lastFrameNs;
     private int width = 1920, height = 1080;
 
-    public ScreenRenderer(HeadPose pose, XrealImu imu) {
+    public ScreenRenderer(HeadPose pose, XrealImu imu, Geometry geom) {
         this.pose = pose;
         this.imu = imu;
+        this.geom = geom;
     }
 
     @Override
@@ -80,8 +96,11 @@ public class ScreenRenderer implements GLSurfaceView.Renderer {
         uTex = GLES20.glGetUniformLocation(program, "uTex");
 
         textureId = createTexture(buildTestPattern());
+        overlayId = createTexture(buildFovCheckFrame());
         GLES20.glClearColor(0.02f, 0.02f, 0.04f, 1f);
         GLES20.glDisable(GLES20.GL_DEPTH_TEST);
+        for (int i = 0; i < 16; i++) identity[i] = 0f;
+        identity[0] = identity[5] = identity[10] = identity[15] = 1f;
     }
 
     @Override
@@ -89,37 +108,61 @@ public class ScreenRenderer implements GLSurfaceView.Renderer {
         width = Math.max(1, w);
         height = Math.max(1, h);
         GLES20.glViewport(0, 0, width, height);
-        perspective(proj, 55.0f, (float) width / (float) height, 0.1f, 100f);
+        setProjection();
+    }
+
+    /**
+     * Projection straight from the optics model: horizontal FOV is the anchor, the vertical FOV
+     * follows from the surface's own aspect, so a world angle lands as the same angle in the eye
+     * whatever the panel size turns out to be.
+     */
+    private void setProjection() {
+        double aspect = (double) width / (double) height;
+        double fovy = 2 * Math.toDegrees(Math.atan(Math.tan(Math.toRadians(geom.fovXDeg() / 2)) / aspect));
+        perspective(proj, (float) fovy, (float) aspect, 0.05f, 200f);
     }
 
     @Override
     public void onDrawFrame(GL10 gl) {
-        // Pose from the latest IMU quaternion, with the real frame interval for the follow filter.
         long now = System.nanoTime();
         double dt = lastFrameNs == 0 ? 1.0 / 60.0 : (now - lastFrameNs) / 1e9;
         lastFrameNs = now;
         pose.update(imu.quatW, imu.quatX, imu.quatY, imu.quatZ, dt);
         pose.getViewMatrix(view);
-        translate(model, 0f, 0f, -2.0f);
+
+        // World quad: scale the unit quad to the requested metric size, put it at the distance.
+        float w = (float) geom.widthM();
+        float h = (float) geom.heightM();
+        float d = (float) geom.distanceM();
+        scaleTranslate(model, w, h, -d);
         multiply(scratch, view, model);
         multiply(mvp, proj, scratch);
 
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         GLES20.glUseProgram(program);
+        drawQuad(QUAD, textureId, mvp);
 
-        FloatBuffer vb = buf(QUAD);
+        // FOV check: full-frame overlay in NDC, unaffected by the pose.
+        if (geom.fovCheck) {
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            drawQuad(NDC_QUAD, overlayId, identity);
+            GLES20.glDisable(GLES20.GL_BLEND);
+        }
+    }
+
+    private void drawQuad(float[] verts, int tex, float[] matrix) {
+        FloatBuffer vb = buf(verts);
         FloatBuffer tb = buf(UV);
         GLES20.glEnableVertexAttribArray(aPos);
         GLES20.glVertexAttribPointer(aPos, 3, GLES20.GL_FLOAT, false, 0, vb);
         GLES20.glEnableVertexAttribArray(aUv);
         GLES20.glVertexAttribPointer(aUv, 2, GLES20.GL_FLOAT, false, 0, tb);
-
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, tex);
         GLES20.glUniform1i(uTex, 0);
-        GLES20.glUniformMatrix4fv(uMvp, 1, false, mvp, 0);
+        GLES20.glUniformMatrix4fv(uMvp, 1, false, matrix, 0);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-
         GLES20.glDisableVertexAttribArray(aPos);
         GLES20.glDisableVertexAttribArray(aUv);
     }
@@ -203,7 +246,56 @@ public class ScreenRenderer implements GLSurfaceView.Renderer {
         c.drawText("XrealBeam", w / 2f, h / 2f - 90, text);
         text.setTextSize(44f);
         text.setColor(Color.rgb(150, 200, 255));
-        c.drawText("turn your head — this quad should stay put in space", w / 2f, h / 2f + 160, text);
+        c.drawText("turn your head - this quad should stay put in space", w / 2f, h / 2f + 160, text);
+
+        return bmp;
+    }
+
+    /**
+     * The FOV check overlay: a transparent bitmap carrying a 1-pixel-class frame at the extreme edge
+     * plus corner brackets. If the wearer sees a gap between these brackets and the panel edge, the
+     * real FOV is wider than the model; if the brackets are cut off, it is narrower.
+     */
+    private static Bitmap buildFovCheckFrame() {
+        int w = 1920, h = 1080;
+        Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(bmp);
+
+        Paint frame = new Paint();
+        frame.setColor(Color.argb(230, 255, 255, 0));
+        frame.setStyle(Paint.Style.STROKE);
+        frame.setStrokeWidth(4f);
+        c.drawRect(2, 2, w - 2, h - 2, frame);
+
+        Paint bracket = new Paint();
+        bracket.setColor(Color.argb(255, 255, 60, 60));
+        bracket.setStyle(Paint.Style.STROKE);
+        bracket.setStrokeWidth(12f);
+        int len = 120;
+        int m = 12;
+        // corner brackets at the very edge: they are the thing to compare against the panel rim
+        c.drawLine(m, m, m + len, m, bracket);
+        c.drawLine(m, m, m, m + len, bracket);
+        c.drawLine(w - m, m, w - m - len, m, bracket);
+        c.drawLine(w - m, m, w - m, m + len, bracket);
+        c.drawLine(m, h - m, m + len, h - m, bracket);
+        c.drawLine(m, h - m, m, h - m - len, bracket);
+        c.drawLine(w - m, h - m, w - m - len, h - m, bracket);
+        c.drawLine(w - m, h - m, w - m, h - m - len, bracket);
+
+        Paint text = new Paint();
+        text.setColor(Color.argb(255, 255, 255, 0));
+        text.setTextSize(54f);
+        text.setFakeBoldText(true);
+        text.setTextAlign(Paint.Align.CENTER);
+        c.drawText("FOV CHECK - brackets must sit ON the panel corners", w / 2f, 80f, text);
+        c.drawText("margin visible = FOV bigger than assumed; cut off = smaller", w / 2f, h - 40f, text);
+
+        Paint mid = new Paint();
+        mid.setColor(Color.argb(200, 0, 255, 128));
+        mid.setStrokeWidth(4f);
+        c.drawLine(w / 2f, h / 2f - 40, w / 2f, h / 2f + 40, mid);
+        c.drawLine(w / 2f - 40, h / 2f, w / 2f + 40, h / 2f, mid);
 
         return bmp;
     }
@@ -231,10 +323,14 @@ public class ScreenRenderer implements GLSurfaceView.Renderer {
         m[14] = (2f * far * near) / (near - far);
     }
 
-    private static void translate(float[] m, float x, float y, float z) {
+    /** Scale to the metric screen size, then push out to -distance (column-major). */
+    private static void scaleTranslate(float[] m, float sx, float sy, float z) {
         for (int i = 0; i < 16; i++) m[i] = 0f;
-        m[0] = 1; m[5] = 1; m[10] = 1; m[15] = 1;
-        m[12] = x; m[13] = y; m[14] = z;
+        m[0] = sx;
+        m[5] = sy;
+        m[10] = 1f;
+        m[14] = z;
+        m[15] = 1f;
     }
 
     /** Column-major 4x4 multiply: out = a * b. */

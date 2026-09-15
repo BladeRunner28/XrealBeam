@@ -51,6 +51,7 @@ public class PoseHarness {
         testStepsPath();
         testMountCal();
         testRolledMountIsWrong();
+        testGeometry();
         System.out.println(allOk ? "\n=== ALL CHECKS PASSED ===" : "\n=== FAILURES PRESENT ===");
         if (!allOk) System.exit(1);
     }
@@ -233,6 +234,66 @@ public class PoseHarness {
                 Math.cos(t) * upTrue[2] + Math.sin(t) * fwdTrue[2]}, 0, 0, 0, 0);
         report("a 20 deg tilt is rejected, not accepted", shy.phase() == MountCal.Phase.FAILED,
                 shy.prompt());
+    }
+
+    /**
+     * Geometry / optics: the projection must come from the panel's field of view, and the named
+     * presets must be reproducible real-screen geometry. "150-inch at 15 ft" is the wearer's cinema
+     * ask, and it lands at ~98% of a 46 deg-diagonal panel — i.e. the optics are the ceiling, not the
+     * software, so anything claiming a bigger screen is clipping.
+     */
+    private static void testGeometry() {
+        System.out.println("\n--- 6. screen geometry and optics ---");
+        Geometry g = new Geometry();
+        report("per-eye FOV from 46 deg diagonal is 40.61 x 23.51 deg (16:9)",
+                Math.abs(g.fovXDeg() - 40.61) < 0.02 && Math.abs(g.fovYDeg() - 23.51) < 0.02,
+                String.format(Locale.US, "%.2f x %.2f, diagonal round-trip %.3f",
+                        g.fovXDeg(), g.fovYDeg(),
+                        2 * Math.toDegrees(Math.atan(Math.sqrt(Math.pow(Math.tan(Math.toRadians(g.fovXDeg() / 2)), 2)
+                                + Math.pow(Math.tan(Math.toRadians(g.fovYDeg() / 2)), 2))))));
+
+        double[] cine = Geometry.fromDiagonalInches(150, 15);
+        report("cinema preset equals 150 in at 15 ft in metres",
+                Math.abs(cine[0] - 3.3208) < 0.001 && Math.abs(cine[1] - 4.5720) < 0.001,
+                String.format(Locale.US, "%.4f m wide at %.4f m", cine[0], cine[1]));
+
+        g.setMode(Geometry.Mode.CINEMA);
+        report("cinema subtends 39.9 x 23.1 deg = 98% of the panel",
+                Math.abs(g.angularWidthDeg() - 39.9) < 0.1 && Math.abs(g.angularHeightDeg() - 23.1) < 0.1
+                        && Math.abs(g.fovFillPercent() - 98.2) < 0.3 && !g.clipped(),
+                String.format(Locale.US, "%.2f x %.2f deg, %.1f%% of FOV, ~%.0f in at %.0f ft",
+                        g.angularWidthDeg(), g.angularHeightDeg(), g.fovFillPercent(),
+                        g.equivalentInches(), g.equivalentFeet()));
+
+        double ndcX = (g.widthM() / 2) / (g.distanceM() * Math.tan(Math.toRadians(g.fovXDeg() / 2)));
+        double ndcY = (g.heightM() / 2) / (g.distanceM() * Math.tan(Math.toRadians(g.fovYDeg() / 2)));
+        report("projection puts the cinema quad at 98% of NDC on both axes",
+                Math.abs(ndcX - ndcY) < 0.002 && ndcX > 0.9 && ndcX < 1.0,
+                String.format(Locale.US, "ndc x %.4f, y %.4f (equal => aspect and FOV agree)", ndcX, ndcY));
+
+        g.setMode(Geometry.Mode.DESK);
+        double deskFill = g.fovFillPercent();
+        g.setMode(Geometry.Mode.COMPACT);
+        double compactFill = g.fovFillPercent();
+        report("desk and compact sit comfortably inside the FOV",
+                deskFill > 40 && deskFill < 70 && compactFill > 30 && compactFill < deskFill && !g.clipped(),
+                String.format(Locale.US, "desk %.0f%%, compact %.0f%%", deskFill, compactFill));
+
+        g.setDiagonalInches(200, 15);
+        boolean flags = g.clipped();
+        // 200 in at 15 ft subtends 51.7 deg = 127% of a 40.6 deg panel: the edges are outside the
+        // optics, so the app must say so instead of quietly cropping them.
+        report("an oversized screen is reported as CLIPPED, not silently cropped",
+                flags && g.fovFillPercent() > 120,
+                String.format(Locale.US, "%.0f%% of FOV -> clipped=%s", g.fovFillPercent(), flags));
+
+        g.setMode(Geometry.Mode.CINEMA);
+        g.shiftDistance(-100);
+        boolean clamped = g.distanceM() > 0.3;
+        g.scaleSize(1e6);
+        boolean sizeClamped = g.widthM() <= 20.0;
+        report("size/distance controls are clamped", clamped && sizeClamped,
+                String.format(Locale.US, "distance floor %.2f m, width ceiling %.1f m", g.distanceM(), g.widthM()));
     }
 
     /**

@@ -20,6 +20,7 @@ mkdir -p "$OUT"
 javac -d "$OUT" \
   "$SRC/HeadPose.java" \
   "$SRC/MountCal.java" \
+  "$SRC/Geometry.java" \
   tools/PoseHarness.java
 
 java -cp "$OUT" com.xman.xrealbeam.PoseHarness

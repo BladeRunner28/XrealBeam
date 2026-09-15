@@ -116,6 +116,35 @@ nose and the automatic stillness gate will not fire). `RESET` returns to the mea
 rendered (viewer frame); the accel line shows the live gravity vector, the window spread used by the
 stillness gate, the drift rate, and the ZUPT governor's suppressed yaw.
 
+## Screen geometry, modes and cinema mode
+
+Every size/distance in the app is in metres and the projection is derived from the **optics**, not
+picked for looks. The Air shows ~46° diagonal per eye (vendor spec — XREAL's own marketing calls that
+"a 130-inch screen from 4 m"), i.e. **40.6° × 23.5°** for a 16:9 panel. The projection used to be 55°
+vertically, which magnified the world ~2.4× versus reality and made every size figure fiction.
+
+Modes are expressed as real screen geometry, so they are reproducible and checkable:
+
+- **cinema** — 3.321 m wide at 4.572 m = **150″ at 15 ft** = 39.9° × 23.1° = **98% of the panel**, 48 px/deg
+- **desk** — 27″ at 1.6 m = 21.2° = 52% of the panel
+- **compact** — 13″ at 1 m = 16.4° = 40% of the panel
+
+Plus `size +/−` (10% steps), `nearer`/`farther` (0.25 m), and a `CLIPPED` flag on the HUD if the
+screen is pushed past the optics — the ceiling is the field of view, so "bigger than cinema" means
+losing the edges, and the app says so instead of quietly cropping.
+
+**The honest ceiling:** the wearer's cinema ask (150″ at 15 ft = 39.9° wide) and XREAL's advertised
+maximum (130″ at 4 m = 39.6° wide) are the same angle to within 0.8%. There is no "even bigger" mode
+to add — the optics bound it, and cinema mode is it.
+
+### FOV check (calibrating the one number we did not measure)
+
+46° diagonal is a vendor number. `FOV check` draws a frame at exactly 100% of the assumed FOV, with
+brackets at the panel corners: **brackets on the corners** = the model is right, **visible margin** =
+the real FOV is wider, **brackets cut off** = narrower. The `FOV` button cycles 46° → 50° → 42° → 52°
+so the wearer can pick the one that lines up; the wearer's eyes are the only instrument available for
+this, so the check is built in rather than asserted.
+
 ## Verify off-device
 
 ```bash
@@ -124,7 +153,9 @@ python3 tools/derive-mount.py # re-derives the default mount from a reported sym
 ```
 
 `HeadPose` and `MountCal` deliberately import nothing from Android, so the *shipping* classes run on
-the desktop against synthetic ground truth (16 checks). The default mount's rows are checked against
+the desktop against synthetic ground truth (23 checks, including the screen geometry: the FOV model
+round-trips to 46° diagonal, the cinema preset is 3.3207 m at 4.5720 m, it lands at 98.3% of the
+panel on both NDC axes, an oversized screen reports CLIPPED, and the size/distance controls clamp). The default mount's rows are checked against
 the on-device measurement and must render all six canonical head motions exactly (axis *and* sense);
 the four variants must flip the documented axis pairs; the manual steps must reach the same mount at
 (90,180,0); `MountCal` must recover a random ground-truth mount from two noisy still poses (worst 2.9°
@@ -228,5 +259,8 @@ reading is **+1 g along whichever body axis points up**.
 - The factory calibration blob (38,884 bytes of JSON) is captured and saved but not parsed; the
   reference driver and the macOS port both discard it too. Parsing it is unexplored upside for the
   residual yaw drift (steady-state 0.04–0.07°/min warm, ~3°/min cold).
-- Content source is still the procedural grid. `MediaProjection` / `SurfaceTexture` is a later step
-  and touches only the texture, not the pose path.
+- **Content source is still the procedural grid — this is the next step** (`MediaProjection` →
+  `SurfaceTexture`, which touches only the texture, not the pose path). Platform notes already
+  settled: single-app window capture needs Android 14 and this phone is 13, so it is full-display
+  mirroring; `targetSdk 34` requires a foreground service of type `mediaProjection`; DRM video
+  (Netflix/Disney+) renders black by design.
