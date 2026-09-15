@@ -52,6 +52,7 @@ public class PoseHarness {
         testMountCal();
         testRolledMountIsWrong();
         testGeometry();
+        testHeadLock();
         System.out.println(allOk ? "\n=== ALL CHECKS PASSED ===" : "\n=== FAILURES PRESENT ===");
         if (!allOk) System.exit(1);
     }
@@ -335,6 +336,46 @@ public class PoseHarness {
                 Math.abs(strUv[0]) < 1e-9 && Math.abs(strUv[3] - 1) < 1e-9
                         && Math.abs(g.contentWidthM() - g.widthM()) < 1e-9,
                 String.format(Locale.US, "uv full, quad %.3f m", g.contentWidthM()));
+    }
+
+    /**
+     * Head-locked mode: the render must ignore the head entirely (that is the point of it, and it is
+     * what makes yaw drift invisible while watching media), while world-lock must still respond.
+     */
+    private static void testHeadLock() {
+        System.out.println("\n--- 7. pose modes: head-locked ignores the IMU ---");
+        HeadPose pose = new HeadPose();
+        float[] q = axisQuat(new float[]{1, 1, 0}, 70f);      // an arbitrary, aggressive head pose
+
+        pose.mode = HeadPose.Mode.HEAD_LOCK;
+        pose.level(1, 0, 0, 0);
+        for (int i = 0; i < 20; i++) pose.update(q[0], q[1], q[2], q[3], 1.0 / 60.0);
+        float[] rendered = pose.renderedQuat();
+        boolean identity = Math.abs(rendered[0] - 1) < 1e-6 && Math.abs(rendered[1]) < 1e-6
+                && Math.abs(rendered[2]) < 1e-6 && Math.abs(rendered[3]) < 1e-6;
+        float[] m = new float[16];
+        pose.getViewMatrix(m);
+        boolean viewIdentity = true;
+        for (int i = 0; i < 16; i++) {
+            float want = (i % 5 == 0) ? 1f : 0f;
+            if (Math.abs(m[i] - want) > 1e-6) viewIdentity = false;
+        }
+        report("head-locked: camera stays identity under a 70 deg head rotation",
+                identity && viewIdentity, "rendered quat " + fmt4(rendered) + ", view identity " + viewIdentity);
+
+        pose.mode = HeadPose.Mode.WORLD_LOCK;
+        pose.update(q[0], q[1], q[2], q[3], 1.0 / 60.0);
+        float[] world = pose.renderedQuat();
+        boolean responds = Math.abs(world[0] - 1) > 1e-3;
+        report("world-lock still follows the head (no regression)", responds,
+                "rendered quat " + fmt4(world) + " vs identity");
+
+        pose.cycleMode();
+        boolean cycled = pose.mode == HeadPose.Mode.SMOOTH_FOLLOW;
+        pose.cycleMode();
+        boolean cycled2 = pose.mode == HeadPose.Mode.HEAD_LOCK;
+        report("pose-mode cycle runs world-lock -> follow -> head-locked -> world-lock",
+                cycled && cycled2 && pose.headLocked(), "now " + pose.describe());
     }
 
     /**

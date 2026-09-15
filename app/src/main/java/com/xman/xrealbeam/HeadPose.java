@@ -41,8 +41,10 @@ package com.xman.xrealbeam;
  * "Level" defines the reference head orientation: everything rendered is relative to it, so the
  * screen starts centred in front of the wearer regardless of how the glasses sat at startup.
  *
- * Modes: world-lock (camera rotation = full head rotation, screen stays put in space) and
- * smooth-follow (the same rotation low-passed, ~0.4 s, so the screen lags and stays near centre).
+ * Modes: world-lock (camera rotation = full head rotation, screen stays put in space), smooth-follow
+ * (the same rotation low-passed, ~0.4 s, so the screen lags and stays near centre), and head-locked
+ * (camera fixed, screen pinned to the glasses - the native display behaviour, and the mode for
+ * watching media).
  */
 public class HeadPose {
 
@@ -75,7 +77,36 @@ public class HeadPose {
     private volatile float[] baseMount = DEFAULT_MOUNT.clone();
     private volatile float[][] variants = variantsOf(DEFAULT_MOUNT);
 
-    public volatile boolean smoothFollow;
+    /**
+     * How the camera follows the head.
+     *   WORLD_LOCK    - camera rotates with the head, so the screen stays put in space (body anchor).
+     *   SMOOTH_FOLLOW - the same, low-passed, so the screen lags and stays near the view centre.
+     *   HEAD_LOCK     - the camera does NOT rotate at all: the screen is fixed to the glasses, which is
+     *                   what the glasses do natively as a display. Nothing about the IMU affects the
+     *                   image, so yaw drift is invisible and the screen is always where you look.
+     *                   This is the mode for watching media.
+     */
+    public enum Mode { WORLD_LOCK, SMOOTH_FOLLOW, HEAD_LOCK }
+
+    public volatile Mode mode = Mode.WORLD_LOCK;
+
+    public void cycleMode() {
+        Mode[] all = Mode.values();
+        mode = all[(mode.ordinal() + 1) % all.length];
+        haveCanon = false;      // avoid a stale-frame jump when coming back from HEAD_LOCK
+    }
+
+    public boolean headLocked() {
+        return mode == Mode.HEAD_LOCK;
+    }
+
+    private String modeName() {
+        switch (mode) {
+            case SMOOTH_FOLLOW: return "follow";
+            case HEAD_LOCK: return "head-locked";
+            default: return "world-lock";
+        }
+    }
 
     /** Install a mount measured on-device (body -> viewer, unit quaternion). */
     public void setMountMeasured(float w, float x, float y, float z) {
@@ -172,6 +203,16 @@ public class HeadPose {
 
     /** Feed one IMU sample. Call at render rate; the smoothing is time-constant based. */
     public void update(float qw, float qx, float qy, float qz, double dt) {
+        if (mode == Mode.HEAD_LOCK) {
+            // Camera stays identity: the screen is pinned to the glasses and ignores the head entirely.
+            cw = 1f;
+            cx = 0f;
+            cy = 0f;
+            cz = 0f;
+            haveCanon = true;
+            fpsTick();
+            return;
+        }
         if (!haveRef) {
             level(qw, qx, qy, qz);
         }
@@ -194,7 +235,7 @@ public class HeadPose {
         if (!haveCanon) {
             cw = cwN; cx = cxN; cy = cyN; cz = czN;
             haveCanon = true;
-        } else if (smoothFollow) {
+        } else if (mode == Mode.SMOOTH_FOLLOW) {
             float alpha = dt > 0 ? (float) Math.min(1.0, dt / 0.4) : 0.5f;
             cw += (cwN - cw) * alpha;
             cx += (cxN - cx) * alpha;
@@ -206,6 +247,10 @@ public class HeadPose {
             cw = cwN; cx = cxN; cy = cyN; cz = czN;   // world-lock: no lag
         }
 
+        fpsTick();
+    }
+
+    private void fpsTick() {
         long now = System.currentTimeMillis();
         frameCount++;
         if (fpsWindowStart == 0) fpsWindowStart = now;
@@ -235,8 +280,7 @@ public class HeadPose {
         String mount = SOURCE_STEPS.equals(mountSource)
                 ? "steps(" + mountStepsX * 90 + "," + mountStepsY * 90 + "," + mountStepsZ * 90 + ")"
                 : mountSource;
-        return "MOUNT " + mount + " " + variantName()
-                + (smoothFollow ? " follow" : " world-lock");
+        return "MOUNT " + mount + " " + variantName() + " " + modeName();
     }
 
     /** The camera rotation currently being rendered (viewer frame) — for diagnostics and tests. */

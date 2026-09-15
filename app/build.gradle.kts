@@ -10,8 +10,8 @@ android {
         applicationId = "com.xman.xrealbeam"
         minSdk = 29          // Note 20 Ultra shipped on Android 10 (API 29)
         targetSdk = 34       // the device is on Android 13 (API 33)
-        versionCode = 6
-        versionName = "0.5-video-file"
+        versionCode = 7
+        versionName = "0.5.1-cinema-headlocked"
     }
 
     compileOptions {

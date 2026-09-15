@@ -138,6 +138,7 @@ public class MainActivity extends Activity {
         root.addView(hint);
 
         pose = new HeadPose();
+        applyPresetMode();   // default preset is cinema -> start head-fixed
         // Both surfaces (embedded and glasses) hold this instance, so it must exist before the
         // renderers are constructed and must survive reconnects — see begin().
         imu = new XrealImu();
@@ -182,16 +183,24 @@ public class MainActivity extends Activity {
         addButton(row, "mount X", v -> { pose.stepMount(0); log("mount: " + pose.describe()); });
         addButton(row, "mount Y", v -> { pose.stepMount(1); log("mount: " + pose.describe()); });
         addButton(row, "mount Z", v -> { pose.stepMount(2); log("mount: " + pose.describe()); });
-        addButton(row, "lock/follow", v -> {
-            pose.smoothFollow = !pose.smoothFollow;
-            log("mode: " + pose.describe());
+        addButton(row, "pose mode", v -> {
+            pose.cycleMode();
+            log("pose: " + pose.describe());
         });
-        addButton(row, "screen", v -> { geom.cycleMode(); log(geom.describe()); });
+        addButton(row, "screen", v -> {
+            geom.cycleMode();
+            applyPresetMode();
+            log(geom.describe() + "  |  " + pose.describe());
+        });
         addButton(row, "size +", v -> { geom.scaleSize(1.1); log(geom.describe()); });
         addButton(row, "size -", v -> { geom.scaleSize(1.0 / 1.1); log(geom.describe()); });
         addButton(row, "nearer", v -> { geom.shiftDistance(-0.25); log(geom.describe()); });
         addButton(row, "farther", v -> { geom.shiftDistance(0.25); log(geom.describe()); });
         // Calibrating the optics assumption with the only instrument available: the wearer's eyes.
+        addButton(row, "head-lock", v -> {
+            pose.mode = pose.headLocked() ? HeadPose.Mode.WORLD_LOCK : HeadPose.Mode.HEAD_LOCK;
+            log("pose: " + pose.describe());
+        });
         addButton(row, "FOV check", v -> {
             geom.fovCheck = !geom.fovCheck;
             log(geom.fovDescribe() + " - brackets must sit ON the panel corners");
@@ -254,6 +263,17 @@ public class MainActivity extends Activity {
         request();
         ui.post(refresh);
         ui.postDelayed(this::showOnGlasses, 1500);
+    }
+
+    /**
+     * Screen presets carry the pose mode that suits them: cinema is watched head-fixed (the screen
+     * pinned to the glasses, which is what the glasses do natively and what makes media comfortable),
+     * everything else is anchored in space so it stays put when you look away. The pose-mode and
+     * head-lock buttons override this until the next preset change.
+     */
+    private void applyPresetMode() {
+        pose.mode = (geom.mode == Geometry.Mode.CINEMA)
+                ? HeadPose.Mode.HEAD_LOCK : HeadPose.Mode.WORLD_LOCK;
     }
 
     private void addButton(LinearLayout row, String label, View.OnClickListener l) {

@@ -14,6 +14,11 @@ Status: `done` · `in progress` · `ready` (unblocked, not started) · `research
 view matrix. Mount measured from gravity in two still poses and confirmed by the shape test.
 *Acceptance: yaw slides sideways, pitch vertically, roll spins in place.* → 0.4, all three correct on device.
 
+**P2 — Pose modes + head-locked cinema.** world-lock / smooth-follow / head-locked, with cinema
+defaulting to head-locked so media is watched fixed to the glasses (the native display behaviour, and
+drift becomes irrelevant). *Acceptance: under a 70° head rotation the head-locked camera stays exactly
+identity while world-lock still follows.* → done and asserted in the harness (0.5.1).
+
 **G1 — Screen geometry from the optics.** Projection derived from the panel FOV (46° diagonal →
 40.6° × 23.5° per eye), metric sizes, presets, `CLIPPED` flag, FOV check frame. *Acceptance: cinema mode
 (150″ at 15 ft) measured as 98.3% of panel on both NDC axes; FOV brackets land on the panel corners.*
@@ -29,10 +34,11 @@ permission on API 29+).
 *Acceptance: pick a local MP4 on the phone, see it playing on the quad, staying put when you turn your head.*
 **Status: in progress. Video only — audio is T1.1a.**
 
-**T1.1a — Audio through the glasses.** `MediaCodec` audio → `AudioTrack`; the Airs enumerate as USB audio
-(class 0x01, interfaces 0–2) so their own speakers carry it once they are the active output.
-*Acceptance: sound comes out of the glasses, roughly in sync with the image.* (Deliberately after T1.1:
-doubles the code and the failure modes, and video-only still proves the path.)
+**T1.1a — Audio through the glasses — DO THIS NEXT.** `MediaCodec` audio → `AudioTrack`; the Airs
+enumerate as USB audio (class 0x01, interfaces 0–2) so their own speakers carry it once they are the
+active output. *Acceptance: sound comes out of the glasses, roughly in sync with the image.*
+Priority raised: the wearer watches real media (with the light blocker on), and a film with no sound is
+not a use case — video-only proved the texture path, which was its job.
 
 **T1.2 — Fill the panel + aspect handling.** `FULL` preset at exactly 100% of the FOV (153″ at 15 ft —
 only 2% larger than cinema mode, because cinema mode already is the window), plus FIT / CROP / STRETCH.
@@ -57,11 +63,17 @@ touching the phone.*
 matches "inside the movie".
 *Acceptance: a 360 file looks around correctly as the head turns, horizon level, no pole pinching.*
 Honest bound: at 40.6° of a 360° panorama you see ~11% at a time — a window into the scene, not a dome
-(a Quest is ~110°).
+(a Quest is ~110°). **Raised in value by T2.2:** with the light blocker on, that window sits in darkness
+rather than in the room, which is what makes a sphere mode read as "inside" instead of "a panel floating
+in my kitchen".
 
-**T2.2 — Ambient darkness — BLOCKED on hardware.** The base Air has **no electrochromic dimmer** (that is
-an Air 2 Pro feature, 0/35/100%), so black pixels let the room through and immersion is capped by ambient
-light. No software fix exists. *Revisit if the glasses change; until then the answer is a dark room.*
+**T2.2 — Ambient darkness — SOLVED BY ACCESSORY, no code.** The base Air has no electrochromic dimmer
+(an Air 2 Pro feature, 0/35/100%), so a black pixel is a *transparent* pixel: on a combiner you cannot
+paint darkness, you can only stop emitting. **The wearer watches media with a clip-on light blocker**,
+which removes the ambient light physically — so black really is black, and immersion is bounded only by
+the 46° window, not by the room. Consequence for rendering: a "black matte" option would be pointless
+(it would not occlude anything); the transparent-area behaviour of FIT is already what a blocker makes
+look like black bars. *Acceptance: none needed — record it so nobody re-opens it as a software problem.*
 
 **T2.3 — Curved screen.** Cylindrical quad for a slight wrap-around feel. *Acceptance: curvature visible
 and harmless at cinema size.* Low value at this FOV — likely never worth the complexity.

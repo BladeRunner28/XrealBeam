@@ -81,6 +81,20 @@ Three other traps, each of which cost a debugging round:
   choices are now four *proper* variants (180° conjugations), each flipping two axes, with the mirror
   (about the viewer's up axis) first so one press fixes a mirrored calibration.
 
+### Pose modes, and which preset uses which
+
+- **world-lock** — the camera rotates with the head, so the screen stays put in space (body anchor).
+  Turn away and it is still there when you turn back.
+- **smooth-follow** — the same rotation low-passed (~0.4 s), so the screen lags and stays near centre.
+- **head-locked** — the camera does not rotate at all: the screen is pinned to the glasses, which is
+  what these glasses do natively as a display. The IMU has no effect on the image, so yaw drift is
+  invisible and there is nothing to recentre. This is the mode for watching media.
+
+**Presets carry their mode:** `screen` → **cinema sets head-locked** (comfort while watching, and drift
+stops mattering), while desk / compact / full-panel set world-lock (a floating anchored screen). The
+`pose mode` button cycles all three and the `head-lock` button toggles it directly; either overrides the
+preset until the next preset change. The app starts in cinema + head-locked.
+
 ### Calibrating the mount on your head (gravity, two still poses)
 
 `CALIBRATE` → prompt appears on the glasses HUD as well as the phone:
@@ -162,9 +176,13 @@ Controls: `play/pause`, `replay`, `aspect` (FIT / CROP / STRETCH), and everythin
 
 Aspect handling is deliberate about *where* the letterbox goes:
 
-- **FIT** shrinks the quad to the source aspect, so the unused panel area simply shows the room through
-  it — worth knowing because these optics have no dimmer, so "black bars" would not have been black.
-  A 2.39:1 file at full panel width uses 74% of the available height (26% of it is see-through).
+- **FIT** shrinks the quad to the source aspect, so the unused panel area simply shows whatever is
+  behind it — worth knowing because on a combiner a black pixel is a *transparent* pixel (you can only
+  stop emitting, never occlude), so "painting the bars black" is impossible by construction and a matte
+  option would be pointless. A 2.39:1 file at full panel width uses 74% of the available height; the
+  other 26% shows what is in front of the wearer. With the **clip-on light blocker** the wearer uses for
+  media, that is dark — i.e. it reads as black bars after all, and the choice becomes aesthetic rather
+  than forced. Without it, that area is the room.
 - **CROP** keeps the quad at panel size and narrows the sampled UVs instead (a 2.39:1 source samples
   u 0.128–0.872, dropping the sides), so the panel is fully covered.
 - **STRETCH** maps the whole frame onto the panel, aspect ignored.
@@ -295,8 +313,9 @@ each with an acceptance test that has to run on the device.
 - The factory calibration blob (38,884 bytes of JSON) is captured and saved but not parsed; the
   reference driver and the macOS port both discard it too. Parsing it is unexplored upside for the
   residual yaw drift (steady-state 0.04–0.07°/min warm, ~3°/min cold).
-- **Content source is still the procedural grid — this is the next step** (`MediaProjection` →
-  `SurfaceTexture`, which touches only the texture, not the pose path). Platform notes already
-  settled: single-app window capture needs Android 14 and this phone is 13, so it is full-display
-  mirroring; `targetSdk 34` requires a foreground service of type `mediaProjection`; DRM video
-  (Netflix/Disney+) renders black by design.
+- Video files play, **video only** — audio is the next card (T1.1a), since the wearer watches real media
+  and a silent film is not a use case.
+- **MediaProjection mirroring** (T1.3): platform notes already settled — single-app window capture needs
+  Android 14 and this phone is 13, so it is full-display mirroring; `targetSdk 34` requires a foreground
+  service of type `mediaProjection`; DRM video (Netflix/Disney+) renders black by design.
+- A/V pacing is a re-anchored wall clock, not a shared clock: fine for video, must be revisited with audio.
