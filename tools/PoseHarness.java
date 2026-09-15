@@ -16,8 +16,8 @@ import java.util.Locale;
  *      and renders every canonical head motion exactly (axis AND sense).
  *   2. The four sign variants flip exactly the documented axis pairs (a single-axis flip would be a
  *      reflection, which is why the old "yaw sign" button misbehaved).
- *   3. The manual step buttons reach the same mount at (0,90,90) - i.e. the old (90,0,90) default was
- *      off by one 90 deg step about the wrong axes, which is what put motion on the wrong axes.
+ *   3. The manual step buttons reach the same mount at (90,180,0) - the old (90,0,90) default was
+ *      90 deg rolled from it, which is what put motion on the wrong axes.
  *   4. MountCal recovers a random ground-truth mount from two noisy still poses, including the
  *      deliberately-wrong tilt direction (sign guard must self-correct), and reports the residual
  *      angle error.
