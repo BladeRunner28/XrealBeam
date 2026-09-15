@@ -34,16 +34,32 @@ public class Geometry {
     private static final double ASPECT = 16.0 / 9.0;
 
     public enum Mode {
-        CINEMA("cinema", 3.321, 4.572),     // 150in 16:9 at 15 ft == 39.9 x 23.1 deg, 98% of FOV
-        DESK("desk", 0.599, 1.600),         // 27in at 1.6 m == 21.2 deg, 52% of FOV
-        COMPACT("compact", 0.288, 1.000);   // 13in at 1 m == 16.4 deg, 40% of FOV
+        CINEMA("cinema", 3.321, 4.572, false),   // 150in 16:9 at 15 ft == 39.9 x 23.1 deg, 98% of FOV
+        DESK("desk", 0.599, 1.600, false),       // 27in at 1.6 m == 21.2 deg, 52% of FOV
+        COMPACT("compact", 0.288, 1.000, false), // 13in at 1 m == 16.4 deg, 40% of FOV
+        FULL("full-panel", 0, 4.572, true),      // 153in at 15 ft - 100% of the optics, the ceiling
+        CUSTOM("custom", 3.321, 4.572, false);   // whatever the size/distance buttons last produced
         public final String label;
         public final double widthM, distanceM;
-        Mode(String label, double widthM, double distanceM) {
+        /** True when the width is derived from the field of view rather than a fixed size. */
+        public final boolean fillPanel;
+        Mode(String label, double widthM, double distanceM, boolean fillPanel) {
             this.label = label;
             this.widthM = widthM;
             this.distanceM = distanceM;
+            this.fillPanel = fillPanel;
         }
+    }
+
+    /** How source content is mapped onto the screen. */
+    public enum Aspect {
+        /** Whole frame visible; the screen is shrunk in the constrained axis (letterbox by geometry,
+         *  so the unused panel area stays see-through rather than painted black). */
+        FIT,
+        /** Screen filled; the excess of the source is cropped away (UV range narrowed). */
+        CROP,
+        /** Whole frame stretched onto the screen, aspect ignored. */
+        STRETCH
     }
 
     public volatile Mode mode = Mode.CINEMA;
@@ -86,11 +102,59 @@ public class Geometry {
     // ---------------- screen ----------------
 
     public double widthM() {
-        return widthM;
+        return mode.fillPanel ? 2 * distanceM * Math.tan(Math.toRadians(fovXDeg() / 2)) : widthM;
+    }
+
+    /** Aspect of the loaded source; 16:9 by default so FIT/CROP are no-ops without a video. */
+    public volatile double sourceAspect = ASPECT;
+    public volatile Aspect aspect = Aspect.FIT;
+
+    public void cycleAspect() {
+        Aspect[] all = Aspect.values();
+        aspect = all[(aspect.ordinal() + 1) % all.length];
+    }
+
+    /** Drawn width after aspect handling. */
+    public double contentWidthM() {
+        if (aspect != Aspect.FIT) {
+            return widthM();
+        }
+        double w = widthM(), h = w / ASPECT;
+        return sourceAspect > ASPECT ? w : h * sourceAspect;
+    }
+
+    /** Drawn height after aspect handling. */
+    public double contentHeightM() {
+        if (aspect != Aspect.FIT) {
+            return widthM() / ASPECT;
+        }
+        double w = widthM(), h = w / ASPECT;
+        return sourceAspect > ASPECT ? w / sourceAspect : h;
+    }
+
+    /**
+     * Texture coordinates to sample for the current aspect mode: {u0, v0, u1, v1}.
+     * CROP narrows the UV range (showing the middle of the source across the full screen); FIT does
+     * its letterboxing in geometry instead, so it keeps the full range.
+     */
+    public double[] uvRect() {
+        double u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+        if (aspect == Aspect.CROP) {
+            if (sourceAspect > ASPECT) {           // source wider -> drop the sides
+                double f = ASPECT / sourceAspect;
+                u0 = (1 - f) / 2;
+                u1 = 1 - u0;
+            } else {                                // source taller -> drop top and bottom
+                double f = sourceAspect / ASPECT;
+                v0 = (1 - f) / 2;
+                v1 = 1 - v0;
+            }
+        }
+        return new double[]{u0, v0, u1, v1};
     }
 
     public double heightM() {
-        return widthM / ASPECT;
+        return widthM() / ASPECT;
     }
 
     public double distanceM() {
@@ -110,7 +174,8 @@ public class Geometry {
 
     /** Scale the screen in 10% steps, clamped so it cannot invert or vanish. */
     public void scaleSize(double factor) {
-        widthM = Math.max(0.05, Math.min(20.0, widthM * factor));
+        widthM = Math.max(0.05, Math.min(20.0, widthM() * factor));
+        mode = Mode.CUSTOM;      // an explicit size is no longer "the panel" or a preset
     }
 
     /** Push the screen away / pull it closer in 0.25 m steps (0.35 m .. 20 m). */
@@ -119,7 +184,9 @@ public class Geometry {
     }
 
     public double angularWidthDeg() {
-        return 2 * Math.toDegrees(Math.atan(widthM / 2 / distanceM));
+        // NB: widthM() with parentheses — the raw field is 0 in FULL (panel-filling) mode, and mixing
+        // the two is a silent zero here rather than a compile error (caught by the harness).
+        return 2 * Math.toDegrees(Math.atan(widthM() / 2 / distanceM));
     }
 
     public double angularHeightDeg() {
@@ -132,7 +199,7 @@ public class Geometry {
     }
 
     public double equivalentInches() {
-        return widthM / 0.0254 * Math.hypot(ASPECT, 1) / ASPECT;
+        return widthM() / 0.0254 * Math.hypot(ASPECT, 1) / ASPECT;
     }
 
     public double equivalentFeet() {
@@ -161,10 +228,11 @@ public class Geometry {
     }
 
     public String describe() {
-        return String.format(Locale.US, "SCREEN %s %.2fm @%.2fm = %.1fx%.1f deg (%.0f%% FOV, ~%.0fin @%.0fft)%s",
-                mode.label, widthM, distanceM, angularWidthDeg(), angularHeightDeg(),
+        return String.format(Locale.US, "SCREEN %s %.2fm @%.2fm = %.1fx%.1f deg (%.0f%% FOV, ~%.0fin @%.0fft)%s%s",
+                mode.label, widthM(), distanceM, angularWidthDeg(), angularHeightDeg(),
                 fovFillPercent(), equivalentInches(), equivalentFeet(),
-                clipped() ? " CLIPPED" : "");
+                clipped() ? " CLIPPED" : "",
+                aspect == Aspect.FIT ? "" : " " + aspect);
     }
 
     public String fovDescribe() {

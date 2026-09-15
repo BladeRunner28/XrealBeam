@@ -145,6 +145,36 @@ the real FOV is wider, **brackets cut off** = narrower. The `FOV` button cycles 
 so the wearer can pick the one that lines up; the wearer's eyes are the only instrument available for
 this, so the check is built in rather than asserted.
 
+## Video files on the screen
+
+`video` on the phone opens a file picker (SAF — no storage permission on API 29+) and plays the file on
+the world-locked quad. Pipeline:
+
+```
+MediaExtractor -> MediaCodec (hardware decoder) -> Surface -> SurfaceTexture (GL_TEXTURE_EXTERNAL_OES)
+```
+
+That is the same texture hand-off `MediaProjection` mirroring will use, so the render path is written
+once and the next content card is a different producer, not a different renderer.
+
+Controls: `play/pause`, `replay`, `aspect` (FIT / CROP / STRETCH), and everything on the geometry row
+(`screen`, `size ±`, `nearer`, `farther`) which acts live on the playing image.
+
+Aspect handling is deliberate about *where* the letterbox goes:
+
+- **FIT** shrinks the quad to the source aspect, so the unused panel area simply shows the room through
+  it — worth knowing because these optics have no dimmer, so "black bars" would not have been black.
+  A 2.39:1 file at full panel width uses 74% of the available height (26% of it is see-through).
+- **CROP** keeps the quad at panel size and narrows the sampled UVs instead (a 2.39:1 source samples
+  u 0.128–0.872, dropping the sides), so the panel is fully covered.
+- **STRETCH** maps the whole frame onto the panel, aspect ignored.
+
+Known limits, all carded: **no audio yet** (T1.1a — video-only is what proves the path), the video draws
+only in the glasses presentation because a decoder feeds exactly one Surface and a GL texture belongs to
+one context (T1.3), and pacing is timestamp-driven with a re-anchored wall clock rather than a shared A/V
+clock. If the image comes out vertically flipped, the shader has a `uFlipY` uniform already wired — one
+line to change once the wearer reports it.
+
 ## Verify off-device
 
 ```bash
@@ -153,9 +183,10 @@ python3 tools/derive-mount.py # re-derives the default mount from a reported sym
 ```
 
 `HeadPose` and `MountCal` deliberately import nothing from Android, so the *shipping* classes run on
-the desktop against synthetic ground truth (23 checks, including the screen geometry: the FOV model
-round-trips to 46° diagonal, the cinema preset is 3.3207 m at 4.5720 m, it lands at 98.3% of the
-panel on both NDC axes, an oversized screen reports CLIPPED, and the size/distance controls clamp). The default mount's rows are checked against
+the desktop against synthetic ground truth (27 checks, including the screen geometry: the FOV model
+round-trips to 46° diagonal, the cinema preset is 3.3207 m at 4.5720 m, it lands at 98.3% of the panel
+on both NDC axes, the full-panel preset is exactly 100%, an oversized screen reports CLIPPED, the
+size/distance controls clamp, and FIT/CROP/STRETCH produce the documented quad sizes and UV ranges). The default mount's rows are checked against
 the on-device measurement and must render all six canonical head motions exactly (axis *and* sense);
 the four variants must flip the documented axis pairs; the manual steps must reach the same mount at
 (90,180,0); `MountCal` must recover a random ground-truth mount from two noisy still poses (worst 2.9°
@@ -251,6 +282,11 @@ blocking read loop.
 
 Accelerometer sign convention (relied on by the mount calibration, verified on-device): at rest the
 reading is **+1 g along whichever body axis points up**.
+
+## Roadmap
+
+Cards live in [`docs/ROADMAP.md`](docs/ROADMAP.md) — done / in progress / ready / research / blocked,
+each with an acceptance test that has to run on the device.
 
 ## Still open
 

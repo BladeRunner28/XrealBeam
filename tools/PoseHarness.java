@@ -294,6 +294,47 @@ public class PoseHarness {
         boolean sizeClamped = g.widthM() <= 20.0;
         report("size/distance controls are clamped", clamped && sizeClamped,
                 String.format(Locale.US, "distance floor %.2f m, width ceiling %.1f m", g.distanceM(), g.widthM()));
+
+        // FULL preset: the width is derived from the field of view, so it is exactly the panel.
+        g = new Geometry();
+        g.setMode(Geometry.Mode.FULL);
+        report("full-panel preset is exactly 100% of the FOV (the optics' ceiling)",
+                Math.abs(g.fovFillPercent() - 100.0) < 0.05 && !g.clipped(),
+                String.format(Locale.US, "%.2f x %.2f deg, ~%.0f in at %.0f ft",
+                        g.angularWidthDeg(), g.angularHeightDeg(), g.equivalentInches(), g.equivalentFeet()));
+
+        // Aspect handling: FIT shrinks the quad (see-through bars), CROP narrows the UVs instead.
+        float[] scoped = {2.39f, 1.0f};
+        java.lang.reflect.Field f = null;
+        g = new Geometry();
+        g.setMode(Geometry.Mode.FULL);
+        g.sourceAspect = scoped[0];
+        g.aspect = Geometry.Aspect.FIT;
+        double fitW = g.contentWidthM(), fitH = g.contentHeightM();
+        double fillH = g.widthM() / (16.0 / 9.0);
+        double[] fitUv = g.uvRect();
+        report("FIT keeps the full frame: quad shrinks to the source aspect, UVs stay full",
+                Math.abs(fitH - fitW / scoped[0]) < 1e-9 && Math.abs(fillH - fitH) > 1e-3
+                        && Math.abs(fitUv[0]) < 1e-9 && Math.abs(fitUv[3] - 1) < 1e-9,
+                String.format(Locale.US, "quad %.3f x %.3f m vs panel %.3f x %.3f m (bars %.0f%% of height)",
+                        fitW, fitH, g.widthM(), fillH, 100 * (1 - fitH / fillH)));
+
+        g.aspect = Geometry.Aspect.CROP;
+        double[] cropUv = g.uvRect();
+        double expectedU0 = (1 - (16.0 / 9.0) / scoped[0]) / 2;
+        report("CROP fills the panel: full quad, narrowed UVs (sides dropped)",
+                Math.abs(g.contentWidthM() - g.widthM()) < 1e-9
+                        && Math.abs(cropUv[0] - expectedU0) < 1e-9
+                        && Math.abs(cropUv[3] - 1) < 1e-9,
+                String.format(Locale.US, "u %.3f..%.3f (expected %.3f..%.3f), v full",
+                        cropUv[0], cropUv[2], expectedU0, 1 - expectedU0));
+
+        g.aspect = Geometry.Aspect.STRETCH;
+        double[] strUv = g.uvRect();
+        report("STRETCH maps the whole frame onto the panel",
+                Math.abs(strUv[0]) < 1e-9 && Math.abs(strUv[3] - 1) < 1e-9
+                        && Math.abs(g.contentWidthM() - g.widthM()) < 1e-9,
+                String.format(Locale.US, "uv full, quad %.3f m", g.contentWidthM()));
     }
 
     /**

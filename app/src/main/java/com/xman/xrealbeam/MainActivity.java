@@ -5,6 +5,7 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.IntentFilter;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -55,6 +56,10 @@ public class MainActivity extends Activity {
     // Screen geometry + optics model: sizes/distances are in metres and the projection comes from
     // the glasses' field of view, so "150-inch at 15 feet" is literally reproducible.
     private final Geometry geom = new Geometry();
+    // Decodes a local file into the presentation renderer's SurfaceTexture (same texture path the
+    // MediaProjection mirroring will use).
+    private final VideoSource video = new VideoSource();
+    private static final int REQ_PICK_VIDEO = 42;
     // Mount calibration: derives the device->viewer mount from gravity in two still poses.
     private final MountCal mountCal = new MountCal();
     private boolean calApplied;
@@ -192,6 +197,13 @@ public class MainActivity extends Activity {
             log(geom.fovDescribe() + " - brackets must sit ON the panel corners");
         });
         addButton(row, "FOV", v -> { geom.cycleFov(); log(geom.fovDescribe()); });
+        addButton(row, "video", v -> pickVideo());
+        addButton(row, "play/pause", v -> {
+            if (video.playing) video.pause(); else video.play();
+            log(video.describe());
+        });
+        addButton(row, "replay", v -> { video.replay(); log(video.describe()); });
+        addButton(row, "aspect", v -> { geom.cycleAspect(); log(geom.describe()); });
         addButton(row, "glasses", v -> showOnGlasses());
 
         // Embedded surface on the phone screen: a second view of the same pose path, so the motion
@@ -275,7 +287,7 @@ public class MainActivity extends Activity {
                 try { presentation.dismiss(); } catch (Exception ignored) { }
                 presentation = null;
             }
-            presentation = new GlassesPresentation(this, target, pose, imu, mountCal, geom);
+            presentation = new GlassesPresentation(this, target, pose, imu, mountCal, geom, video);
             presentation.show();
             log("presentation shown on display " + target.getDisplayId()
                     + " (" + target.getName() + ")");
@@ -351,6 +363,46 @@ public class MainActivity extends Activity {
                 log("no calibration blob captured (calDrained=" + imu.calDrained + ")");
             }
         }, "xreal-handshake").start();
+    }
+
+    /** Pick a local video file (SAF: no storage permission needed on API 29+). */
+    private void pickVideo() {
+        GlassesPresentation p = presentation;
+        if (p == null || p.renderer() == null || p.renderer().videoSurfaceTexture() == null) {
+            log("video: needs the glasses display and a ready GL context "
+                    + "(presentation=" + (p != null) + ") — press 'glasses' then retry");
+            return;
+        }
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("video/*");
+            startActivityForResult(i, REQ_PICK_VIDEO);
+        } catch (Exception e) {
+            log("video: no file picker available (" + e + ")");
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK_VIDEO) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            log("video: picker cancelled");
+            return;
+        }
+        Uri uri = data.getData();
+        GlassesPresentation p = presentation;
+        ScreenRenderer r = (p == null) ? null : p.renderer();
+        if (r == null || r.videoSurfaceTexture() == null) {
+            log("video: GL context not ready — press 'glasses' and retry");
+            return;
+        }
+        log(video.open(this, uri, r.videoSurfaceTexture()));
+        geom.sourceAspect = video.aspect();
+        log(geom.describe());
+        video.play();
+        log(video.describe());
     }
 
     private void retry() {
@@ -439,7 +491,7 @@ public class MainActivity extends Activity {
                                 + "DRIFT %7.2f deg / %5.0f s  = %7.2f deg/min%n"
                                 + "ZUPT %-9s suppressed %7.2f deg%n"
                                 + "render %s  %.0f fps  %s%n"
-                                + "%s%n%s%n"
+                                + "%s%n%s%n%s%n"
                                 + "gyro bias %6.2f %6.2f %6.2f deg/s",
                         imu.state, imu.frames, imu.hz,
                         imu.yaw, imu.pitch, imu.roll,
@@ -449,7 +501,7 @@ public class MainActivity extends Activity {
                         imu.stillness ? "ACTIVE" : "idle", imu.yawSuppressedDeg,
                         pose.isLeveled() ? "LEVELLED" : "not levelled",
                         pose.fps(), pose.describe(),
-                        geom.describe(), geom.fovDescribe(),
+                        geom.describe(), geom.fovDescribe(), video.describe(),
                         imu.gyroBiasX, imu.gyroBiasY, imu.gyroBiasZ));
                 detail.setText(imu.lastFrameInfo + "\n\n"
                         + "----- handshake -----\n" + imu.handshakeLog
@@ -482,6 +534,8 @@ public class MainActivity extends Activity {
                 + "\ndrift: " + imu.driftDeg + " deg over " + imu.driftSeconds + " s  = "
                 + imu.driftDegPerMin + " deg/min   (recentered=" + imu.recentered + ")"
                 + "\ngyro bias estimate: " + imu.gyroBiasX + " " + imu.gyroBiasY + " " + imu.gyroBiasZ + " deg/s"
+                + "\n=== VIDEO ==="
+                + "\n" + video.describe()
                 + "\n=== SCREEN / OPTICS ==="
                 + "\n" + geom.describe()
                 + "\n" + geom.fovDescribe()

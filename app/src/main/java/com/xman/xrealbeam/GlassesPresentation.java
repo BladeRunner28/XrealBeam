@@ -32,6 +32,8 @@ public class GlassesPresentation extends Presentation {
     private final XrealImu imu;
     private final MountCal mountCal;
     private final Geometry geom;
+    private final VideoSource video;
+    private ScreenRenderer renderer;
     private GLSurfaceView gl;
     private TextView hud;
     private TextView prompt;
@@ -42,12 +44,13 @@ public class GlassesPresentation extends Presentation {
         public void run() {
             if (hud != null) {
                 hud.setText(String.format(Locale.US,
-                        "%s | %.0f fps | %s | %s\n%s\n%s\naccel %6.2f %6.2f %6.2f g   |a| %.2f   spread %.3f g",
+                        "%s | %.0f fps | %s | %s\n%s\n%s\n%s\naccel %6.2f %6.2f %6.2f g   |a| %.2f   spread %.3f g",
                         pose.isLeveled() ? "LEVELLED" : "not levelled",
                         pose.fps(), pose.describe(),
                         imu == null ? "no IMU" : imu.state,
                         geom == null ? "" : geom.describe(),
                         geom == null ? "" : geom.fovDescribe(),
+                        video == null ? "" : video.describe(),
                         imu == null ? 0 : imu.accelBodyX, imu == null ? 0 : imu.accelBodyY,
                         imu == null ? 0 : imu.accelBodyZ,
                         imu == null ? 0 : Math.sqrt(imu.accelBodyX * imu.accelBodyX
@@ -64,12 +67,22 @@ public class GlassesPresentation extends Presentation {
     };
 
     public GlassesPresentation(Context ctx, Display display, HeadPose pose, XrealImu imu,
-                               MountCal mountCal, Geometry geom) {
+                               MountCal mountCal, Geometry geom, VideoSource video) {
         super(ctx, display);
         this.pose = pose;
         this.imu = imu;
         this.mountCal = mountCal;
         this.geom = geom;
+        this.video = video;
+    }
+
+    /**
+     * The renderer that owns the video texture. Only this one draws the video: a MediaCodec decoder
+     * feeds exactly one Surface, and a GL texture belongs to one GL context, so the presentation is
+     * the single video host. (Routing video into the in-activity fallback surface is a separate card.)
+     */
+    public ScreenRenderer renderer() {
+        return renderer;
     }
 
     @Override
@@ -80,7 +93,9 @@ public class GlassesPresentation extends Presentation {
 
         gl = new GLSurfaceView(getContext());
         gl.setEGLContextClientVersion(2);
-        gl.setRenderer(new ScreenRenderer(pose, imu, geom));
+        renderer = new ScreenRenderer(pose, imu, geom);
+        renderer.video = video;
+        gl.setRenderer(renderer);
         gl.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         root.addView(gl, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
