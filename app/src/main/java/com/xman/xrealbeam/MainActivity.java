@@ -169,7 +169,7 @@ public class MainActivity extends Activity {
             calApplied = false;
             lastCalPhase = MountCal.Phase.IDLE;
             pose.resetMount();
-            log("mount reset to the derived default: " + pose.describe());
+            log("mount reset to the measured default: " + pose.describe());
         });
         addButton(row, "mount X", v -> { pose.stepMount(0); log("mount: " + pose.describe()); });
         addButton(row, "mount Y", v -> { pose.stepMount(1); log("mount: " + pose.describe()); });

@@ -104,7 +104,7 @@ public class HeadPose {
         applySteps();
     }
 
-    /** Back to the measured/derived default mount — the escape hatch from an unknown state. */
+    /** Back to the measured default mount — the escape hatch from an unknown state. */
     public void resetMount() {
         mountStepsX = 1;
         mountStepsY = 0;

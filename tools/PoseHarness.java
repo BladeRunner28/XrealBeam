@@ -11,9 +11,9 @@ import java.util.Locale;
  * and a wrong mount is invisible in review but unmistakable on the head.
  *
  * Checks:
- *   1. HeadPose.DEFAULT_MOUNT equals the mount derived from the wearer's on-device axis report
- *      (nod rendered as yaw, tilt rendered as pitch -> 120 deg about (1,1,1), rows x->body+z,
- *      up->body+x, back->body+y), and renders every canonical head motion exactly.
+ *   1. HeadPose.DEFAULT_MOUNT equals the mount MEASURED on the wearer's head (rows right->body -x,
+ *      up->body +z, back->body +y = 180 deg about body (0,1,1), quaternion (0,0,0.7071,0.7071)),
+ *      and renders every canonical head motion exactly (axis AND sense).
  *   2. The four sign variants flip exactly the documented axis pairs (a single-axis flip would be a
  *      reflection, which is why the old "yaw sign" button misbehaved).
  *   3. The manual step buttons reach the same mount at (0,90,90) - i.e. the old (90,0,90) default was

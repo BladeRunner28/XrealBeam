@@ -107,7 +107,7 @@ in place — three distinct shapes, so the result is one sentence to report. Sha
 is the mirror and `flip` once fixes it.
 
 `pose now` force-captures the current window as the current pose (for when the glasses wobble on the
-nose and the automatic stillness gate will not fire). `RESET` returns to the derived default mount.
+nose and the automatic stillness gate will not fire). `RESET` returns to the measured default mount.
 `mount X/Y/Z` remain as a manual escape hatch, and the report says which source is in use.
 
 ### Frame-rate / drift numbers are in the app
