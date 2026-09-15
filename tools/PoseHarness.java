@@ -32,10 +32,15 @@ public class PoseHarness {
     private static final float[][] MOTION_AXES = {
             {0, 1, 0}, {0, -1, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 0, -1}, {0, 0, 1}};
 
-    /** The mount derived from the on-device report (see HeadPose class comment). */
+    /**
+     * The mount measured on the wearer's head with two still poses (gravity) and confirmed by the
+     * shape test. An earlier symptom-derived default was 90 deg rolled from this and shipped; if
+     * someone edits DEFAULT_MOUNT again, check these rows against a fresh on-device measurement
+     * rather than against an argument.
+     */
     private static final float[][] EXPECTED_ROWS = {
-            {0, 0, 1},   // viewer +x (right)  in body coords
-            {1, 0, 0},   // viewer +y (up)     in body coords
+            {-1, 0, 0},  // viewer +x (right)  in body coords
+            {0, 0, 1},   // viewer +y (up)     in body coords
             {0, 1, 0}};  // viewer +z (back)   in body coords
 
     private static boolean allOk = true;
@@ -45,6 +50,7 @@ public class PoseHarness {
         testVariants();
         testStepsPath();
         testMountCal();
+        testRolledMountIsWrong();
         System.out.println(allOk ? "\n=== ALL CHECKS PASSED ===" : "\n=== FAILURES PRESENT ===");
         if (!allOk) System.exit(1);
     }
@@ -65,7 +71,7 @@ public class PoseHarness {
 
         float[] q = HeadPose.DEFAULT_MOUNT;
         double angle = 2 * Math.toDegrees(Math.acos(Math.min(1, Math.abs(q[0]))));
-        report("default mount is the 120 deg cube rotation", Math.abs(angle - 120) < 1e-3,
+        report("default mount is the measured 180 deg about body (0,1,1)", Math.abs(angle - 180) < 1e-3,
                 String.format(Locale.US, "angle %.3f deg about (%.3f,%.3f,%.3f)",
                         angle, Math.abs(q[1]), Math.abs(q[2]), Math.abs(q[3])));
 
@@ -118,12 +124,12 @@ public class PoseHarness {
     private static void testStepsPath() {
         System.out.println("\n--- 3. manual step buttons vs the derived mount ---");
         HeadPose pose = new HeadPose();
-        pose.mountStepsX = 0;
-        pose.mountStepsY = 1;
-        pose.mountStepsZ = 1;
+        pose.mountStepsX = 1;
+        pose.mountStepsY = 2;
+        pose.mountStepsZ = 0;
         pose.applySteps();
         double dot = Math.abs(dot(pose.mountQuat(), HeadPose.DEFAULT_MOUNT));
-        report("steps(0,90,90) == derived default", dot > 1 - 1e-6,
+        report("steps(90,180,0) == measured default", dot > 1 - 1e-6,
                 String.format(Locale.US, "|<q,q_default>| = %.6f (quat %s)", dot, fmt4(pose.mountQuat())));
         pose.resetMount();
         report("RESET returns to the default mount",
@@ -227,6 +233,32 @@ public class PoseHarness {
                 Math.cos(t) * upTrue[2] + Math.sin(t) * fwdTrue[2]}, 0, 0, 0, 0);
         report("a 20 deg tilt is rejected, not accepted", shy.phase() == MountCal.Phase.FAILED,
                 shy.prompt());
+    }
+
+    /**
+     * Regression guard for the shipped bug: the old symptom-derived default (90 deg rolled, up =
+     * body +x) put motion on the wrong axes. It must keep failing this test forever - it is the
+     * exact error the harness failed to catch the first time round, because it was checking the
+     * pipeline against its own assumption rather than against a measurement.
+     */
+    private static void testRolledMountIsWrong() {
+        System.out.println("\n--- 5. regression guard: the old rolled mount is wrong ---");
+        float[] rolled = {0.5f, 0.5f, 0.5f, 0.5f};     // the 120 deg cube rotation that shipped by mistake
+        HeadPose pose = new HeadPose();
+        int wrong = 0;
+        StringBuilder detail = new StringBuilder();
+        for (int i = 0; i < MOTION_NAMES.length; i++) {
+            float[] out = renderFresh(pose, rolled, MOTION_AXES[i], 30f);
+            float[] want = axisQuat(MOTION_AXES[i], 30f);
+            if (Math.abs(dot(out, want)) < 1 - 1e-6) {
+                wrong++;
+                if (detail.length() < 90) {
+                    detail.append(MOTION_NAMES[i]).append(" -> ").append(axisName(out)).append("; ");
+                }
+            }
+        }
+        report("rolled mount fails the shape test (as it did on the head)", wrong >= 4,
+                wrong + "/6 motions land on the wrong axis: " + detail);
     }
 
     // ---------- helpers ----------

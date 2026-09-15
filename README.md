@@ -43,17 +43,39 @@ IMU frame → Madgwick AHRS (6-axis) → q_rel = conj(q_ref)·q_cur → change o
           → world-lock (no filter) or smooth-follow (~0.4 s low-pass) → view matrix = R^T
 ```
 
-Three traps, each of which cost a debugging round:
+**The mount, measured on the wearer's head (2026-09-14).** Rows are the viewer axes expressed in body
+(= IMU) coordinates:
+
+- viewer **right** (+x) → body **−x**
+- viewer **up** (+y) → body **+z**
+- viewer **back** (+z) → body **+y**
+
+which is a 180° rotation about body (0,1,1)/√2, quaternion **(0, 0, 0.7071, 0.7071)**, and also
+reachable with the manual step buttons at mount X 90 / Y 180. Raw inputs: still-pose accel
+up = `(−0.004, 0.029, 1.000) g` and forward = `(−0.039, −0.999, 0.029) g`, i.e. within 2.8° of that
+clean axis alignment (the residual is how level the wearer's head was, not the hardware).
+
+### How this was got wrong first — read before touching the mount
+
+An earlier build shipped `(0.5, 0.5, 0.5, 0.5)` (up = body **+x**), derived by working backwards from
+the wearer's verbal symptom — *"nodding makes it yaw, tilting my head moves the frame up and down"* —
+over the 24 proper axis-aligned mounts. That derivation silently assumed which mount the app had been
+using when the symptom was observed. **With the prior state unknown, all 24 candidates explain that
+sentence** (`tools/derive-mount.py` prints the count), so the "derivation" was a guess in algebraic
+clothing, and it came out 90° rolled. It passed the off-device harness, because the harness had been
+written to check the pipeline against that same assumption. One minute on the head falsified it.
+
+What is load-bearing instead: the accelerometer reports the world up with a *physical* sign, so two
+still poses measure the mount outright, and the wearer's eyes confirm it through the **shape** of each
+motion — yaw slides sideways, pitch slides vertically, roll spins in place. Prose can be off by an axis
+name (the original report called the spin "yaw"); shapes cannot.
+
+Three other traps, each of which cost a debugging round:
 
 - **The mount is a change of basis**, `q_view = q_mount · q_rel · conj(q_mount)`. A composition
   (`q_mount · q_rel`) stretches motion instead of rotating it.
-- **A mount that is wrong by an axis *permutation* looks like clean head motion on the wrong axis** —
-  which is exactly how it presented: nodding pitched the screen sideways (nod → yaw) and tilting the
-  head moved it up and down (tilt → pitch), while the app reported a "measured" mount. Working
-  backwards from that observation (`tools/derive-mount.py`) gives the true mount: **120° about
-  (1,1,1)/√3, quaternion (0.5, 0.5, 0.5, 0.5)**, i.e. worn up = body **+x**, worn back = body **+y**,
-  worn right = body **+z**. That is *not* any combination of 90° "mount X/Y/Z" steps, which is why
-  tapping those buttons never converged.
+- **A mount wrong by an axis permutation renders clean, plausible head motion on the wrong axis** —
+  which is what made this feel like a rendering bug for a whole day.
 - **A single-axis sign flip is not a frame change** — it is a reflection (det −1). The old "yaw sign"
   toggle negated yaw alone in the Euler decomposition, so it flipped pitch and left yaw alone. Sign
   choices are now four *proper* variants (180° conjugations), each flipping two axes, with the mirror
@@ -78,9 +100,11 @@ Three traps, each of which cost a debugging round:
 5. The screen re-centres itself: after the mount is installed the app waits for the next still moment
    and takes that as the LEVEL reference (and restarts the drift clock).
 
-**Pass criterion:** turn your head **left** — a world-locked screen must slide **right** and stay
-where you left it. If the screen keeps hovering in front of your face, the mount is still off; if a
-nod reads backwards, press `flip` once.
+**Pass criterion — the shape test** (in `world-lock`): turning the head must slide the grid
+**sideways**, nodding must slide it **vertically**, tilting the head toward a shoulder must **spin** it
+in place — three distinct shapes, so the result is one sentence to report. Shapes that come out rotated
+(turning slides it up/down, nodding spins it) mean the mount is rolled 90°; a nod that reads backwards
+is the mirror and `flip` once fixes it.
 
 `pose now` force-captures the current window as the current pose (for when the glasses wobble on the
 nose and the automatic stillness gate will not fire). `RESET` returns to the derived default mount.
@@ -100,13 +124,20 @@ python3 tools/derive-mount.py # re-derives the default mount from a reported sym
 ```
 
 `HeadPose` and `MountCal` deliberately import nothing from Android, so the *shipping* classes run on
-the desktop against synthetic ground truth: the default mount is checked against the derivation and
-must render all five canonical head motions exactly (axis *and* sense), the four variants must flip
-the documented axis pairs, the manual steps must reach the same mount at (0,90,90), and `MountCal`
-must recover a random ground-truth mount from two noisy still poses (worst 2.9° at 0.01 g per-axis
-noise over 45–90° tilts, exact for noise-free input), reject a 20° tilt rather than produce a bad
-mount, and produce exactly the mirror — fixable with one `flip` press — when the wearer tilts the
-wrong way.
+the desktop against synthetic ground truth (16 checks). The default mount's rows are checked against
+the on-device measurement and must render all six canonical head motions exactly (axis *and* sense);
+the four variants must flip the documented axis pairs; the manual steps must reach the same mount at
+(90,180,0); `MountCal` must recover a random ground-truth mount from two noisy still poses (worst 2.9°
+at 0.01 g per-axis noise over 45–90° tilts, exact for noise-free input), reject a 20° tilt rather than
+produce a bad mount, and produce exactly the mirror — fixable with one `flip` press — when the wearer
+tilts the wrong way. There is also a **regression guard** that the 90°-rolled mount which shipped by
+mistake still fails the shape test; if anyone ever edits `DEFAULT_MOUNT` back toward it, the harness
+says so instead of the wearer having to.
+
+```bash
+python3 tools/derive-mount.py     # the measurement, the shape test, and why the symptom-derivation
+                                  # that produced that rolled mount was not evidence (24/24 candidates)
+```
 
 Check the APK really contains the app code:
 

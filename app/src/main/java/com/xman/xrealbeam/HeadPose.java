@@ -13,16 +13,23 @@ package com.xman.xrealbeam;
  *    A composition (q_mount * q_rel) stretches motion instead of rotating it.
  *
  * 3. **A mount that is wrong only by a permutation of axes is worse than an obviously wrong one**,
- *    because every motion still looks like clean head motion - just on the wrong axis. The wearer
- *    reported exactly that: nodding pitched the screen sideways (nod -> yaw) and tilting the head
- *    moved it up and down (tilt -> pitch), while the app insisted the mount was a "measured"
- *    MOUNT(90,0,90). Working backwards from that single observation, over the 24 proper
- *    axis-aligned mounts, exactly four explain it, and all four are the same axes with different
- *    signs: the true body->viewer mount is a **120 deg rotation about (1,1,1)/sqrt(3)**, i.e.
- *    quaternion (0.5, 0.5, 0.5, 0.5) - NOT any combination of 90 deg "mount X/Y/Z" steps, which is
- *    why tapping those buttons never converged. {@link #DEFAULT_MOUNT} is that rotation.
- *    Independent cross-check: it says the world "up" is body **+x** when worn and body **+y** when
- *    flat on a desk, which is exactly the 90 deg difference between those two poses.
+ *    because every motion still looks like clean head motion - just on the wrong axis. That is how
+ *    this project spent a day: the wearer reported "nodding makes it yaw, tilting my head moves the
+ *    frame up and down" and the app insisted on a "measured" MOUNT(90,0,90).
+ *
+ *    How the mount was *finally* established, because the wrong turn is worth recording: an earlier
+ *    build shipped a mount derived by working backwards from that symptom sentence over the 24 proper
+ *    axis-aligned mounts. That derivation silently assumed which mount the app had been using when
+ *    the wearer saw the symptom - and with that prior state unknown, **every one of the 24 candidates
+ *    explains the sentence**, so the answer was really just a guess dressed in algebra. It came out
+ *    90 deg rolled (up = body +x), passed the off-device harness (which only checked that the pipeline
+ *    agreed with its own assumption), and was falsified in about a minute on the head.
+ *
+ *    What is actually load-bearing is a direct measurement: the accelerometer reports the world up
+ *    with a physical sign, so two still poses - level, then head tilted back - measure the viewer's
+ *    up and forward rows outright ({@link MountCal}), and the wearer's eyes confirm it by checking the
+ *    *shape* of each motion: yaw slides horizontally, pitch slides vertically, roll spins in place.
+ *    "All three shapes right" is the acceptance test, and it is one sentence to report.
  *
  * Sign ambiguity: the four candidate mounts differ only in sign (each is the others conjugated by a
  * 180 deg rotation). Gravity fixes the axes; a single-axis sign flip is NOT physically realizable
@@ -40,11 +47,18 @@ package com.xman.xrealbeam;
 public class HeadPose {
 
     /**
-     * Body -> viewer mount derived from the wearer's on-device axis report (see class comment).
-     * Quaternion (0.5, 0.5, 0.5, 0.5) = 120 deg about (1,1,1)/sqrt(3). Rows (viewer axes in body
-     * coords): x -> body +z, y (up) -> body +x, z (back) -> body +y.
+     * Body -> viewer mount MEASURED on the wearer's head (Note 20 Ultra + XREAL Air, 2026-09-14).
+     * Rows (viewer axes in body coords): x (right) -> body -x, y (up) -> body +z, z (back) -> body +y
+     * - a 180 deg rotation about body (0,1,1)/sqrt(2), quaternion (0, 0, 0.707107, 0.707107).
+     *
+     * Raw inputs: still-pose accel up = (-0.004, 0.029, 1.000) g and forward =
+     * (-0.039, -0.999, 0.029) g, i.e. within 2.8 deg of this clean axis alignment (the residual is
+     * how level the wearer's head was, not the hardware). Confirmed on the head by the shape test
+     * (yaw slides sideways, pitch slides vertically, roll spins) and reachable with the manual step
+     * buttons at mount X 90 / Y 180. An earlier default of (0.5, 0.5, 0.5, 0.5) was 90 deg rolled -
+     * see the class comment for why the derivation that produced it was not evidence.
      */
-    public static final float[] DEFAULT_MOUNT = {0.5f, 0.5f, 0.5f, 0.5f};
+    public static final float[] DEFAULT_MOUNT = {0f, 0f, 0.70710678f, 0.70710678f};
 
     public static final String SOURCE_DEFAULT = "default";
     public static final String SOURCE_MEASURED = "autocal";
